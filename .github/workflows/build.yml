@@ -415,6 +415,34 @@ jobs:
           echo "DM_GAME=$PROFILE_ID" >> "$GITHUB_ENV"
           echo "DETECTED_TITLE_ID=$DETECTED_ID" >> "$GITHUB_ENV"
 
+      - name: Fetch missing game profile from upstream
+        shell: bash
+        run: |
+          set -euo pipefail
+          PROFILE_DIR="dm/games/${DM_GAME}"
+
+          if [[ -f "${PROFILE_DIR}/game.tsv" ]]; then
+            echo "Profile ${DM_GAME} already present in the checked-out tree."
+            exit 0
+          fi
+
+          echo "Profile ${DM_GAME} missing in this nxnative version; fetching from seedds/nxnative main."
+          UPSTREAM_DIR="$RUNNER_TEMP/nxnative-upstream"
+          rm -rf "$UPSTREAM_DIR"
+          git clone --depth 1 --filter=blob:none --sparse \
+            https://github.com/seedds/nxnative.git "$UPSTREAM_DIR"
+          git -C "$UPSTREAM_DIR" sparse-checkout set "$PROFILE_DIR"
+
+          if [[ ! -f "$UPSTREAM_DIR/$PROFILE_DIR/game.tsv" ]]; then
+            echo "::error::Profile ${DM_GAME} not found upstream either."
+            exit 1
+          fi
+
+          mkdir -p "$PROFILE_DIR"
+          cp -R "$UPSTREAM_DIR/$PROFILE_DIR/." "$PROFILE_DIR/"
+          echo "Copied profile files:"
+          ls -la "$PROFILE_DIR"
+
       - name: Update shader toolchain lock and header
         shell: bash
         run: |
