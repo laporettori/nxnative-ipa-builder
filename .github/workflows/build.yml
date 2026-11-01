@@ -1,3 +1,4 @@
+
 name: NxNative - Generic IPA Builder
 
 on:
@@ -32,7 +33,6 @@ jobs:
         with:
           repository: mianmuhammadse/nxnative
           ref: d158df611bf2f3fa315c4f16585575cdfdb2a1d3
-          path: nxnative
 
       - name: Checkout standard nxnative version
         if: inputs.device == 'iPhone 15 Pro/Pro Max or newer (standard)'
@@ -40,28 +40,6 @@ jobs:
         with:
           repository: seedds/nxnative
           ref: main
-          path: nxnative
-
-      - name: Verify nxnative checkout
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          echo "Workspace: $GITHUB_WORKSPACE"
-          ls -ld "$GITHUB_WORKSPACE/nxnative"
-
-          test -f "$GITHUB_WORKSPACE/nxnative/dm/games/0100D5B026844000/game.tsv" || {
-            echo "::error::Expected profile file not found in nxnative checkout: $GITHUB_WORKSPACE/nxnative/dm/games/0100D5B026844000/game.tsv"
-            exit 1
-          }
-
-          CHAIN_SCRIPT="$(find "$GITHUB_WORKSPACE/nxnative" -name dmsh_chain.py -type f -print -quit)"
-          if [[ -z "$CHAIN_SCRIPT" ]]; then
-            echo "::error::Could not find dmsh_chain.py in the nxnative checkout."
-            exit 1
-          fi
-
-          echo "Found shader toolchain script: $CHAIN_SCRIPT"
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -104,36 +82,39 @@ jobs:
               exit 1
             fi
 
-            file_id="$(
-              python - "$url" <<'PY'
-import re
-import sys
-from urllib.parse import urlparse, parse_qs
+            file_id="$(python - "$url" <<'PY'
+          import re
+          import sys
+          from urllib.parse import urlparse, parse_qs
 
-url = sys.argv[1].strip()
-parsed = urlparse(url)
-query = parse_qs(parsed.query)
-file_id = None
+          url = sys.argv[1].strip()
+          parsed = urlparse(url)
+          query = parse_qs(parsed.query)
+          file_id = None
 
-if parsed.netloc.lower() in (
-    "drive.google.com",
-    "www.drive.google.com",
-):
-    match = re.search(r"/file/d/([^/]+)", parsed.path)
-    if match:
-        file_id = match.group(1)
-    elif query.get("id"):
-        file_id = query["id"][0]
+          if parsed.netloc.lower() in (
+              "drive.google.com",
+              "www.drive.google.com",
+          ):
+              match = re.search(r"/file/d/([^/]+)", parsed.path)
+              if match:
+                  file_id = match.group(1)
+              elif query.get("id"):
+                  file_id = query["id"][0]
 
-if not file_id and re.fullmatch(r"[-A-Za-z0-9_]{20,}", url):
-    file_id = url
+          if not file_id and re.fullmatch(
+              r"[-A-Za-z0-9_]{20,}", url
+          ):
+              file_id = url
 
-if not file_id:
-    raise SystemExit("Could not extract a Google Drive file ID.")
+          if not file_id:
+              raise SystemExit(
+                  "Could not extract a Google Drive file ID."
+              )
 
-print(file_id)
-PY
-            )"
+          print(file_id)
+          PY
+          )"
 
             echo "Downloading $(basename "$output")..."
             gdown "$file_id" -O "$output"
@@ -167,121 +148,153 @@ PY
         shell: bash
         run: |
           set -euo pipefail
-
           WORK="$RUNNER_TEMP/nxnative"
           GAME_DIR="$RUNNER_TEMP/GameFiles"
           mkdir -p "$GAME_DIR"
 
           python - "$WORK" "$GAME_DIR" <<'PY'
-import shutil
-import subprocess
-import sys
-from pathlib import Path
+          import shutil
+          import subprocess
+          import sys
+          from pathlib import Path
 
-work = Path(sys.argv[1])
-game_dir = Path(sys.argv[2])
-package_extensions = {".nsp", ".xci", ".nsz", ".xcz"}
-rar_signatures = (
-    b"Rar!\x1a\x07\x00",
-    b"Rar!\x1a\x07\x01\x00",
-)
+          work = Path(sys.argv[1])
+          game_dir = Path(sys.argv[2])
+          package_extensions = {
+              ".nsp", ".xci", ".nsz", ".xcz"
+          }
+          rar_signatures = (
+              b"Rar!\x1a\x07\x00",
+              b"Rar!\x1a\x07\x01\x00",
+          )
 
-def validate_package(path):
-    with path.open("rb") as f:
-        magic = f.read(4)
+          def validate_package(path):
+              with path.open("rb") as f:
+                  magic = f.read(4)
 
-    suffix = path.suffix.lower()
+              suffix = path.suffix.lower()
 
-    if suffix in (".nsp", ".nsz") and magic != b"PFS0":
-        raise SystemExit(f"Invalid {suffix} package signature: {path.name}")
+              if suffix in (".nsp", ".nsz") and magic != b"PFS0":
+                  raise SystemExit(
+                      f"Invalid {suffix} package signature: {path.name}"
+                  )
 
-    if suffix in (".xci", ".xcz") and magic != b"HEAD":
-        raise SystemExit(f"Invalid {suffix} package signature: {path.name}")
+              if suffix in (".xci", ".xcz") and magic != b"HEAD":
+                  raise SystemExit(
+                      f"Invalid {suffix} package signature: {path.name}"
+                  )
 
-def add_package(source, label):
-    target = game_dir / source.name
+          def add_package(source, label):
+              target = game_dir / source.name
 
-    if target.exists():
-        raise SystemExit("Duplicate package filename: " + source.name)
+              if target.exists():
+                  raise SystemExit(
+                      "Duplicate package filename: " + source.name
+                  )
 
-    validate_package(source)
-    shutil.copy2(source, target)
+              validate_package(source)
+              shutil.copy2(source, target)
 
-    print(f"Added {label}: {target.name} ({target.stat().st_size:,} bytes)")
+              print(
+                  f"Added {label}: {target.name} "
+                  f"({target.stat().st_size:,} bytes)"
+              )
 
-def process_download(label):
-    source = work / f"{label}.download"
+          def process_download(label):
+              source = work / f"{label}.download"
 
-    if not source.exists():
-        print(f"No {label} download; skipping.")
-        return
+              if not source.exists():
+                  print(f"No {label} download; skipping.")
+                  return
 
-    with source.open("rb") as f:
-        signature = f.read(8)
+              with source.open("rb") as f:
+                  signature = f.read(8)
 
-    is_rar = any(signature.startswith(magic) for magic in rar_signatures)
+              is_rar = any(
+                  signature.startswith(magic)
+                  for magic in rar_signatures
+              )
 
-    if is_rar:
-        extract_dir = work / f"extracted-{label}"
-        extract_dir.mkdir(parents=True, exist_ok=True)
-        print(f"{label}: RAR archive detected; extracting.")
+              if is_rar:
+                  extract_dir = work / f"extracted-{label}"
+                  extract_dir.mkdir(parents=True, exist_ok=True)
 
-        subprocess.run(
-            ["unar", "-o", str(extract_dir), str(source)],
-            check=True,
-        )
+                  print(f"{label}: RAR archive detected; extracting.")
 
-        packages = sorted(
-            p for p in extract_dir.rglob("*")
-            if p.is_file() and p.suffix.lower() in package_extensions
-        )
+                  subprocess.run(
+                      [
+                          "unar",
+                          "-o",
+                          str(extract_dir),
+                          str(source),
+                      ],
+                      check=True,
+                  )
 
-        if not packages:
-            raise SystemExit(
-                f"No NSP/XCI/NSZ/XCZ packages found in the {label} RAR archive."
-            )
+                  packages = sorted(
+                      p for p in extract_dir.rglob("*")
+                      if p.is_file()
+                      and p.suffix.lower() in package_extensions
+                  )
 
-        for package in packages:
-            add_package(package, label)
+                  if not packages:
+                      raise SystemExit(
+                          f"No NSP/XCI/NSZ/XCZ packages found "
+                          f"in the {label} RAR archive."
+                      )
 
-    else:
-        print(f"{label}: not a RAR archive; checking as a direct package.")
+                  for package in packages:
+                      add_package(package, label)
 
-        if signature[:4] == b"PFS0":
-            extension = ".nsp"
-        elif signature[:4] == b"HEAD":
-            extension = ".xci"
-        else:
-            raise SystemExit(
-                f"{label} is not a recognized RAR archive or direct NSP/XCI package."
-            )
+              else:
+                  print(
+                      f"{label}: not a RAR archive; "
+                      "checking as a direct package."
+                  )
 
-        target = game_dir / f"{label}{extension}"
+                  if signature[:4] == b"PFS0":
+                      extension = ".nsp"
+                  elif signature[:4] == b"HEAD":
+                      extension = ".xci"
+                  else:
+                      raise SystemExit(
+                          f"{label} is not a recognized RAR archive "
+                          "or direct NSP/XCI package. "
+                          "Direct downloads must be NSP or XCI files."
+                      )
 
-        if target.exists():
-            raise SystemExit(f"Output package already exists: {target.name}")
+                  target = game_dir / f"{label}{extension}"
 
-        shutil.copy2(source, target)
-        validate_package(target)
+                  if target.exists():
+                      raise SystemExit(
+                          f"Output package already exists: {target.name}"
+                      )
 
-        print(f"Added direct package: {target.name} ({target.stat().st_size:,} bytes)")
+                  shutil.copy2(source, target)
+                  validate_package(target)
 
-process_download("game")
-process_download("update")
-process_download("dlc")
+                  print(
+                      f"Added direct package: {target.name} "
+                      f"({target.stat().st_size:,} bytes)"
+                  )
 
-packages = sorted(
-    p for p in game_dir.iterdir()
-    if p.is_file() and p.suffix.lower() in package_extensions
-)
+          process_download("game")
+          process_download("update")
+          process_download("dlc")
 
-if not packages:
-    raise SystemExit("No game packages were prepared.")
+          packages = sorted(
+              p for p in game_dir.iterdir()
+              if p.is_file()
+              and p.suffix.lower() in package_extensions
+          )
 
-print("\n=== Prepared game packages ===")
-for package in packages:
-    print(f"{package.name}: {package.stat().st_size:,} bytes")
-PY
+          if not packages:
+              raise SystemExit("No game packages were prepared.")
+
+          print("\n=== Prepared game packages ===")
+          for package in packages:
+              print(f"{package.name}: {package.stat().st_size:,} bytes")
+          PY
 
           test -s "$WORK/prod.keys"
 
@@ -291,94 +304,103 @@ PY
         shell: bash
         run: |
           set -euo pipefail
-
           GAME_DIR="$RUNNER_TEMP/GameFiles"
 
-          if [[ -n "${PROFILE_OVERRIDE:-}" ]]; then
-            DETECTED_ID="${PROFILE_OVERRIDE}"
-          else
-            DETECTED_ID="$(
-              python - "$GAME_DIR" <<'PY'
-import re
-import struct
-import sys
-from pathlib import Path
+          DETECTED_ID="$(python - "$GAME_DIR" <<'PY'
+          import re
+          import struct
+          import sys
+          from pathlib import Path
 
-root = Path(sys.argv[1])
-extensions = {".nsp", ".xci", ".nsz", ".xcz"}
+          root = Path(sys.argv[1])
+          extensions = {".nsp", ".xci", ".nsz", ".xcz"}
 
-def pfs0_names(path):
-    try:
-        with path.open("rb") as f:
-            header = f.read(16)
+          def pfs0_names(path):
+              try:
+                  with path.open("rb") as f:
+                      header = f.read(16)
 
-        if len(header) != 16 or header[:4] != b"PFS0":
-            return []
+                      if len(header) != 16 or header[:4] != b"PFS0":
+                          return []
 
-        count, string_size = struct.unpack_from("<II", header, 4)
-        if count > 100000 or string_size > 100000000:
-            return []
+                      count, string_size = struct.unpack_from(
+                          "<II", header, 4
+                      )
 
-        with path.open("rb") as f:
-            f.seek(16)
-            entries = f.read(count * 0x18)
-            strings = f.read(string_size)
+                      if count > 100000 or string_size > 100000000:
+                          return []
 
-        if len(entries) != count * 0x18:
-            return []
+                      entries = f.read(count * 0x18)
+                      strings = f.read(string_size)
 
-        names = []
-        for i in range(count):
-            off = i * 0x18
-            if off + 0x18 > len(entries):
-                continue
+                      if len(entries) != count * 0x18:
+                          return []
 
-            string_offset = struct.unpack_from("<I", entries, off)[0]
-            string_length = struct.unpack_from("<I", entries, off + 4)[0]
+                      names = []
 
-            if string_offset + string_length > len(strings):
-                continue
+                      for i in range(count):
+                          offset = struct.unpack_from(
+                              "<I", entries, i * 0x18 + 0x10
+                          )[0]
 
-            names.append(
-                strings[string_offset:string_offset + string_length]
-                .rstrip(b"\x00")
-                .decode("utf-8", "ignore")
-            )
+                          if offset >= len(strings):
+                              continue
 
-        return names
-    except (OSError, struct.error):
-        return []
+                          end = strings.find(b"\0", offset)
 
-candidates = set()
+                          if end < 0:
+                              continue
 
-for path in sorted(root.iterdir()):
-    if not path.is_file() or path.suffix.lower() not in extensions:
-        continue
+                          names.append(
+                              strings[offset:end].decode(
+                                  errors="replace"
+                              )
+                          )
 
-    for name in pfs0_names(path):
-        match = re.fullmatch(r"([0-9A-Fa-f]{16})[0-9A-Fa-f]{16}\.tik", name)
-        if match:
-            title_id = int(match.group(1), 16)
-            if (title_id & 0xFFF) == 0:
-                candidates.add(f"{title_id:016X}")
+                      return names
 
-    match = re.search(r"\[([0-9A-Fa-f]{16})\]", path.name)
-    if match:
-        title_id = int(match.group(1), 16)
-        if (title_id & 0xFFF) == 0:
-            candidates.add(f"{title_id:016X}")
+              except (OSError, struct.error):
+                  return []
 
-if len(candidates) != 1:
-    raise SystemExit(
-        "Could not uniquely identify the base game's title ID. "
-        f"Candidates found: {sorted(candidates)}. "
-        "Check the base NSP and its ticket/filename."
-    )
+          candidates = set()
 
-print(next(iter(candidates)))
-PY
-            )"
-          fi
+          for path in root.iterdir():
+              if not path.is_file() or path.suffix.lower() not in extensions:
+                  continue
+
+              for name in pfs0_names(path):
+                  match = re.fullmatch(
+                      r"([0-9A-Fa-f]{16})[0-9A-Fa-f]{16}\.tik",
+                      name,
+                  )
+
+                  if match:
+                      title_id = int(match.group(1), 16)
+
+                      if (title_id & 0xFFF) == 0:
+                          candidates.add(f"{title_id:016X}")
+
+              match = re.search(
+                  r"\[([0-9A-Fa-f]{16})\]",
+                  path.name,
+              )
+
+              if match:
+                  title_id = int(match.group(1), 16)
+
+                  if (title_id & 0xFFF) == 0:
+                      candidates.add(f"{title_id:016X}")
+
+          if len(candidates) != 1:
+              raise SystemExit(
+                  "Could not uniquely identify the base game's title ID. "
+                  f"Candidates found: {sorted(candidates)}. "
+                  "Check the base NSP and its ticket/filename."
+              )
+
+          print(next(iter(candidates)))
+          PY
+          )"
 
           PROFILE_ID="${PROFILE_OVERRIDE:-$DETECTED_ID}"
           PROFILE_ID="$(echo "$PROFILE_ID" | tr '[:lower:]' '[:upper:]')"
@@ -390,40 +412,31 @@ PY
 
           echo "Detected base title ID: $DETECTED_ID"
           echo "Shader profile ID: $PROFILE_ID"
-
-          echo "PROFILE_ID=${PROFILE_ID}" >> "$GITHUB_ENV"
-          echo "DETECTED_TITLE_ID=${DETECTED_ID}" >> "$GITHUB_ENV"
+          echo "DM_GAME=$PROFILE_ID" >> "$GITHUB_ENV"
+          echo "DETECTED_TITLE_ID=$DETECTED_ID" >> "$GITHUB_ENV"
 
       - name: Update shader toolchain lock and header
         shell: bash
-        working-directory: nxnative
-        env:
-          DM_GAME: ${{ env.PROFILE_ID }}
         run: |
           set -euo pipefail
+          echo "Preparing shader toolchain for profile $DM_GAME"
 
-          if [[ -z "${DM_GAME:-}" ]]; then
-            echo "::error::DM_GAME is empty; no shader profile selected."
-            exit 1
-          fi
+          CHAIN_SCRIPT="$(
+            find . -name dmsh_chain.py -type f -print -quit
+          )"
 
-          CHAIN_SCRIPT="$(find . -name dmsh_chain.py -type f -print -quit)"
           if [[ -z "$CHAIN_SCRIPT" ]]; then
             echo "::error::Could not find dmsh_chain.py"
             exit 1
           fi
-
-          echo "Preparing shader toolchain for profile $DM_GAME"
 
           python "$CHAIN_SCRIPT" --update-lock
           python "$CHAIN_SCRIPT" --header
 
       - name: Build unsigned IPA
         shell: bash
-        working-directory: nxnative
         run: |
           set -euo pipefail
-
           WORK="$RUNNER_TEMP/nxnative"
           GAME_DIR="$RUNNER_TEMP/GameFiles"
           OUTPUT="$RUNNER_TEMP/NxNative.ipa"
